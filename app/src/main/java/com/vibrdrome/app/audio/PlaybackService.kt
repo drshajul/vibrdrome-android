@@ -11,10 +11,14 @@ import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.CommandButton
+import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
+import com.vibrdrome.app.R
 import com.vibrdrome.app.network.AlbumListType
 import com.vibrdrome.app.network.Song
 import com.vibrdrome.app.network.SubsonicClient
@@ -42,6 +46,59 @@ class PlaybackService : MediaLibraryService() {
         playbackManager.onPlayerSwapped = { newPlayer ->
             session?.player = newPlayer
         }
+
+        // Subscribe to playback state changes to update custom layout dynamically (e.g., for Android Auto)
+        scope.launch {
+            playbackManager.currentSong.collect {
+                updateCustomLayout()
+            }
+        }
+        scope.launch {
+            playbackManager.shuffleEnabled.collect {
+                updateCustomLayout()
+            }
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun updateCustomLayout() {
+        val session = session ?: return
+        val currentSong = playbackManager.currentSong.value
+        val shuffleEnabled = playbackManager.shuffleEnabled.value
+
+        val isStarred = currentSong?.starred != null
+        val isThumbsUp = currentSong?.userRating == 5
+        val isThumbsDown = currentSong?.userRating == 1
+
+        val favoriteButton = CommandButton.Builder()
+            .setDisplayName(if (isStarred) "Unfavorite" else "Favorite")
+            .setIconResId(if (isStarred) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
+            .setSessionCommand(SessionCommand(ACTION_FAVORITE, android.os.Bundle.EMPTY))
+            .setEnabled(currentSong != null)
+            .build()
+
+        val thumbsUpButton = CommandButton.Builder()
+            .setDisplayName("Thumbs Up")
+            .setIconResId(if (isThumbsUp) R.drawable.ic_thumbs_up_filled else R.drawable.ic_thumbs_up)
+            .setSessionCommand(SessionCommand(ACTION_THUMBS_UP, android.os.Bundle.EMPTY))
+            .setEnabled(currentSong != null)
+            .build()
+
+        val thumbsDownButton = CommandButton.Builder()
+            .setDisplayName("Thumbs Down")
+            .setIconResId(if (isThumbsDown) R.drawable.ic_thumbs_down_filled else R.drawable.ic_thumbs_down)
+            .setSessionCommand(SessionCommand(ACTION_THUMBS_DOWN, android.os.Bundle.EMPTY))
+            .setEnabled(currentSong != null)
+            .build()
+
+        val shuffleButton = CommandButton.Builder()
+            .setDisplayName(if (shuffleEnabled) "Shuffle (On)" else "Shuffle (Off)")
+            .setIconResId(R.drawable.ic_shuffle)
+            .setSessionCommand(SessionCommand(ACTION_SHUFFLE, android.os.Bundle.EMPTY))
+            .setEnabled(true)
+            .build()
+
+        session.setCustomLayout(listOf(thumbsUpButton, favoriteButton, thumbsDownButton, shuffleButton))
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
@@ -65,6 +122,55 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private inner class BrowseCallback : MediaLibrarySession.Callback {
+
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            val connectionResult = super.onConnect(session, controller)
+            val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+                .add(SessionCommand(ACTION_FAVORITE, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_THUMBS_UP, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_THUMBS_DOWN, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_SHUFFLE, android.os.Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.accept(
+                availableSessionCommands,
+                connectionResult.availablePlayerCommands
+            )
+        }
+
+        override fun onPostConnect(session: MediaSession, controller: MediaSession.ControllerInfo) {
+            updateCustomLayout()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: android.os.Bundle
+        ): ListenableFuture<SessionResult> {
+            when (customCommand.customAction) {
+                ACTION_FAVORITE -> {
+                    playbackManager.toggleCurrentSongStarred()
+                    updateCustomLayout()
+                }
+                ACTION_THUMBS_UP -> {
+                    playbackManager.setCurrentSongRating(5)
+                    updateCustomLayout()
+                }
+                ACTION_THUMBS_DOWN -> {
+                    playbackManager.setCurrentSongRating(1)
+                    updateCustomLayout()
+                }
+                ACTION_SHUFFLE -> {
+                    playbackManager.toggleShuffle()
+                    updateCustomLayout()
+                }
+                else -> return super.onCustomCommand(session, controller, customCommand, args)
+            }
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
 
         override fun onGetLibraryRoot(
             session: MediaLibrarySession,
@@ -292,5 +398,9 @@ class PlaybackService : MediaLibraryService() {
 
     companion object {
         private const val ROOT_ID = "root"
+        private const val ACTION_FAVORITE = "com.vibrdrome.app.action.FAVORITE"
+        private const val ACTION_THUMBS_UP = "com.vibrdrome.app.action.THUMBS_UP"
+        private const val ACTION_THUMBS_DOWN = "com.vibrdrome.app.action.THUMBS_DOWN"
+        private const val ACTION_SHUFFLE = "com.vibrdrome.app.action.SHUFFLE"
     }
 }

@@ -110,8 +110,8 @@ fun NowPlayingScreen(
     val jukeboxStatus by jukeboxManager.status.collectAsState()
     val effectiveIsPlaying = if (isJukebox) jukeboxStatus?.playing ?: false else isPlaying
 
-    var isStarred by remember(currentSong?.id) { mutableStateOf(currentSong?.starred != null) }
-    var currentRating by remember(currentSong?.id) { mutableStateOf(currentSong?.userRating ?: 0) }
+    val isStarred = currentSong?.starred != null
+    val currentRating = currentSong?.userRating ?: 0
     var showPlaylistDialog by remember { mutableStateOf(false) }
 
     val song = currentSong
@@ -503,17 +503,7 @@ fun NowPlayingScreen(
 
                 // Favorite
                 TextButton(onClick = {
-                    val wasStarred = isStarred
-                    isStarred = !wasStarred
-                    bookmarkScope.launch {
-                        try {
-                            val client = appState.subsonicClient
-                            if (wasStarred) client.unstar(id = song.id)
-                            else client.star(id = song.id)
-                        } catch (_: Throwable) {
-                            isStarred = wasStarred
-                        }
-                    }
+                    playbackManager.toggleCurrentSongStarred()
                 }) {
                     Icon(
                         if (isStarred) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -545,15 +535,7 @@ fun NowPlayingScreen(
                     IconButton(
                         onClick = {
                             val newRating = if (currentRating == star) 0 else star
-                            val oldRating = currentRating
-                            currentRating = newRating
-                            bookmarkScope.launch {
-                                try {
-                                    appState.subsonicClient.setRating(song.id, newRating)
-                                } catch (_: Throwable) {
-                                    currentRating = oldRating
-                                }
-                            }
+                            playbackManager.setCurrentSongRating(newRating)
                         },
                     ) {
                         Icon(

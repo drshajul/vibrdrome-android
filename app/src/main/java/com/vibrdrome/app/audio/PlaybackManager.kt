@@ -786,6 +786,71 @@ class PlaybackManager(
         player.shuffleModeEnabled = !player.shuffleModeEnabled
     }
 
+    fun toggleCurrentSongStarred() {
+        val song = _currentSong.value ?: return
+        val wasStarred = song.starred != null
+        val updatedSong = song.copy(starred = if (wasStarred) null else "starred")
+        val currentIdx = _currentIndex.value
+        if (currentIdx >= 0) {
+            val updatedQueue = _queue.value.toMutableList()
+            updatedQueue[currentIdx] = updatedSong
+            _queue.value = updatedQueue
+        }
+        _currentSong.value = updatedSong
+
+        scope.launch {
+            try {
+                if (wasStarred) {
+                    appState.subsonicClient.unstar(id = song.id)
+                } else {
+                    appState.subsonicClient.star(id = song.id)
+                }
+            } catch (_: Throwable) {
+                // Revert state if API call fails
+                val currentSongNow = _currentSong.value
+                if (currentSongNow?.id == song.id) {
+                    val revertedSong = currentSongNow.copy(starred = song.starred)
+                    if (currentIdx >= 0 && currentIdx < _queue.value.size && _queue.value[currentIdx].id == song.id) {
+                        val revertedQueue = _queue.value.toMutableList()
+                        revertedQueue[currentIdx] = revertedSong
+                        _queue.value = revertedQueue
+                    }
+                    _currentSong.value = revertedSong
+                }
+            }
+        }
+    }
+
+    fun setCurrentSongRating(rating: Int) {
+        val song = _currentSong.value ?: return
+        val updatedSong = song.copy(userRating = rating)
+        val currentIdx = _currentIndex.value
+        if (currentIdx >= 0) {
+            val updatedQueue = _queue.value.toMutableList()
+            updatedQueue[currentIdx] = updatedSong
+            _queue.value = updatedQueue
+        }
+        _currentSong.value = updatedSong
+
+        scope.launch {
+            try {
+                appState.subsonicClient.setRating(song.id, rating)
+            } catch (_: Throwable) {
+                // Revert state if API call fails
+                val currentSongNow = _currentSong.value
+                if (currentSongNow?.id == song.id) {
+                    val revertedSong = currentSongNow.copy(userRating = song.userRating)
+                    if (currentIdx >= 0 && currentIdx < _queue.value.size && _queue.value[currentIdx].id == song.id) {
+                        val revertedQueue = _queue.value.toMutableList()
+                        revertedQueue[currentIdx] = revertedSong
+                        _queue.value = revertedQueue
+                    }
+                    _currentSong.value = revertedSong
+                }
+            }
+        }
+    }
+
     fun setPlaybackSpeed(speed: Float) {
         _playbackSpeed.value = speed
         prefs.edit().putFloat("playback_speed", speed).apply()
